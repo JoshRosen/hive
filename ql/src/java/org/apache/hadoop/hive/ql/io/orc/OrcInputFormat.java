@@ -78,6 +78,15 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+
+import org.apache.hadoop.security.UserGroupInformation;
+import javax.security.auth.Subject;
+import java.security.AccessControlContext;
+import java.security.AccessController;
+import java.security.Principal;
+import java.security.PrivilegedExceptionAction;
+import java.util.*;
+
 /**
  * A MapReduce/Hive input format for ORC files.
  * <p>
@@ -621,6 +630,7 @@ public class OrcInputFormat  implements InputFormat<NullWritable, OrcStruct>,
     private final Context context;
     private final FileSystem fs;
     private final Path dir;
+    private UserGroupInformation ugi;
 
     FileGenerator(Context context, FileSystem fs, Path dir) {
       this.context = context;
@@ -628,8 +638,41 @@ public class OrcInputFormat  implements InputFormat<NullWritable, OrcStruct>,
       this.dir = dir;
     }
 
+
+    FileGenerator(Context context, FileSystem fs, Path dir, UserGroupInformation ugi) {
+      this.context = context;
+      this.fs = fs;
+      this.dir = dir;
+      this.ugi = ugi;
+    }
+
     @Override
     public SplitStrategy call() throws IOException {
+
+      if(ugi == null)
+        return doCallInternal();
+      AccessControlContext accessControlContext = AccessController.getContext();
+      Subject subject = Subject.getSubject(accessControlContext);
+      Set<Principal> principals =  subject.getPrincipals();
+
+      try {
+        SplitStrategy strategy = this.ugi.doAs(new PrivilegedExceptionAction<SplitStrategy>() {
+          @Override
+          public SplitStrategy run() throws Exception {
+
+            AccessControlContext accessControlContext = AccessController.getContext();
+            Subject subject = Subject.getSubject(accessControlContext);
+            Set<Principal> principals =  subject.getPrincipals();
+            return doCallInternal();
+          }
+        });
+        return strategy;
+      }catch(Exception e){
+        throw new IOException("hello");
+      }
+    }
+
+    private SplitStrategy doCallInternal() throws IOException{
       final SplitStrategy splitStrategy;
       AcidUtils.Directory dirInfo = AcidUtils.getAcidState(dir,
           context.conf, context.transactionList);
@@ -984,11 +1027,12 @@ public class OrcInputFormat  implements InputFormat<NullWritable, OrcStruct>,
     List<OrcSplit> splits = Lists.newArrayList();
     List<Future<?>> pathFutures = Lists.newArrayList();
     List<Future<?>> splitFutures = Lists.newArrayList();
+    UserGroupInformation ugi = UserGroupInformation.getCurrentUser();
 
     // multi-threaded file statuses and split strategy
     for (Path dir : getInputPaths(conf)) {
       FileSystem fs = dir.getFileSystem(conf);
-      FileGenerator fileGenerator = new FileGenerator(context, fs, dir);
+      FileGenerator fileGenerator = new FileGenerator(context, fs, dir,ugi);
       pathFutures.add(context.threadPool.submit(fileGenerator));
     }
 
