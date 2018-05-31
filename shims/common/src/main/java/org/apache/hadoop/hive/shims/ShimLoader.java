@@ -169,6 +169,7 @@ public abstract class ShimLoader {
     case 1:
       return HADOOP20SVERSIONNAME;
     case 2:
+    case 3:
       return HADOOP23VERSIONNAME;
     default:
       throw new IllegalArgumentException("Unrecognized Hadoop major version number: " + vers);
